@@ -15,6 +15,7 @@ using namespace std;
 class Image{
     public:
         string fileName;
+        float averageBrightness;
         int width;
         int height;
         vector<vector<int>> smallProfile;
@@ -40,6 +41,7 @@ float GetColourSimilarity(vector<int> a, vector<int> b);
 float GetYUVColourSimilarity(vector<float> a, vector<float> b);
 float GetChannelSimilarity(int a, int b);
 void ShowMatches(vector<Pairing> matches);
+float GetAspectRatioPenalty(Image image1, Image image2);
 
 const float colourDifferencePenalty = 1.0;//0.78125f;
 const bool colourSimilarityUsesAverage = true;//true is less strict = higher percent similar
@@ -50,23 +52,35 @@ int minimumSimilarity = 90;
 
 bool isSortedBySimilarity = false;
 bool isRecursive = true;//searches all sub directories
+bool usesAspectRatioPenalty = true;
+float aspectRatioPenalty = 0.75f;//multiplied by absolute difference in aspect ratio
 int imageLimit = 700;
 float resolutionPenalty = 0;
 int imageMinimumLength = 4;
+string workingDirectory = "./";
 
+int main(int argc, char *argv[]) {
+    //TODO: feature: check single image against a directory of images
+    //TODO: feature: save profiles for faster future scans (checking modified date/hash to determine if updating needs to be done)
 
-int main() {
-    //TODO: check single image against a directory of images
-    //TODO: combine two directories without duplication
-    //TODO: save prfiles for faster future scans (checking modified date to determine if updating needs to be done)
+    if(argc >= 2){
+        if(strcmp(argv[1], "0") == 0 || strcmp(argv[1], "false") == 0){
+            isRecursive = false;
+        }
+    }
+    
+    if(argc >= 3){
+        workingDirectory = argv[2];
+        //TODO if last char isn't / then append one to the end
+    }
 
     cimg_library::cimg::exception_mode(0);
     
     chrono::high_resolution_clock::time_point t1 = chrono::high_resolution_clock::now();
 
-    cout << "Searching directory...\n";
+    cout << "Searching directory \"" << workingDirectory << "\"...\n";
     
-    vector<string> files = GetImageList("./", isRecursive);
+    vector<string> files = GetImageList(workingDirectory, isRecursive);
     
     if(files.size() < 2){
         cout << files.size() << " image(s) found.  Minimum is 2.  Exiting.\n";
@@ -108,22 +122,28 @@ int main() {
     }
     
     if(ignoredImages.size() > 0){
-        cout << ignoredImages.size() << " images were ignored due to being too small (width or height less than 4).\n";
+        cout << ignoredImages.size() << " image(s) were ignored due to being too small (width or height less than 4).\n";
     }
     
     long long totalChecks = files.size() * (files.size() - 1) / 2;
     cout << "Image profile generation done.  Performing " << totalChecks << " comparisons...\n";
     chrono::high_resolution_clock::time_point t2 = chrono::high_resolution_clock::now();
-    auto duration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
+    auto profileGenerationDuration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
     
     //Compare smallProfiles for matches to add to firstPass
     vector<Pairing> matches;
     for(int i = 0; i < images.size(); i++){
         for(int j = i + 1; j < images.size(); j++){
             float similarity = CompareProfiles(images[i].smallProfile, images[j].smallProfile);
+            
+            if(usesAspectRatioPenalty){
+                float penaltyMultiplier = GetAspectRatioPenalty(images[i], images[j]);
+                similarity *= penaltyMultiplier;
+            }
+            
             if(similarity > minimumSimilarity){
                 cout << images[i].fileName << " and " << images[j].fileName << " are " << similarity << " % similar.\n";
-                //TODO: sort by similarity before outputting
+                //TODO: sort by similarity before outputting?
                 Pairing newPairing;
                 newPairing.image1 = images[i];
                 newPairing.image2 = images[j];
@@ -133,8 +153,8 @@ int main() {
         }
     }
 
-    cout << "Profile generation took " << duration / (float)1000000 << " seconds.\n";
-    //TODO split timing - profile generation only?
+    cout << "Profile generation took " << profileGenerationDuration / (float)1000000 << " seconds.\n";
+    //TODO add duration for comparisons
     cout << matches.size() << " matches found.\n";
     
     if(matches.size() > 0){
@@ -214,10 +234,20 @@ vector<float> ConvertToYUV(vector<int> colour){
     return vector<float> {y, u, v};
 }
 
+float GetAspectRatioPenalty(Image image1, Image image2){
+    float image1ar = (float)image1.width / (float)image1.height;
+    float image2ar = (float)image2.width / (float)image2.height;
+    float multiplier = max(1.0f - aspectRatioPenalty * (abs(image1ar - image2ar)), 0.0f);
+    cout << "ar penalty: " << image1.width << "," << image1.height << " (" << image1ar << ") vs " << image2.width << "," << image2.height << " (" << image2ar << ") yields multiplier of " << multiplier << "\n";
+    
+    return multiplier;
+}
+
 float CompareProfiles(vector<vector<int>> image1, vector<vector<int>> image2){
     
     float similarSums = 0;
     //TODO penalize very small images (absolute) when compared to very large images (relative)
+    //TODO penalize for different x,y ratios
     for(int i = 0; i < image1.size(); i++){
         //TODO YUV or RGB? or both?
         float nbhSimilarity = GetYUVColourSimilarity(ConvertToYUV(image1[i]), ConvertToYUV(image2[i]));
