@@ -42,6 +42,7 @@ float GetYUVColourSimilarity(vector<float> a, vector<float> b);
 float GetChannelSimilarity(int a, int b);
 void ShowMatches(vector<Pairing> matches);
 float GetAspectRatioPenalty(Image image1, Image image2);
+string GetTitle(Image img, int id, double similarity);
 
 const float colourDifferencePenalty = 1.0;//0.78125f;
 const bool colourSimilarityUsesAverage = true;//true is less strict = higher percent similar
@@ -131,6 +132,7 @@ int main(int argc, char *argv[]) {
     auto profileGenerationDuration = chrono::duration_cast<chrono::microseconds>(t2 - t1).count();
     
     //Compare smallProfiles for matches to add to firstPass
+    //TODO: look into doing this in parallel
     vector<Pairing> matches;
     for(int i = 0; i < images.size(); i++){
         for(int j = i + 1; j < images.size(); j++){
@@ -142,8 +144,8 @@ int main(int argc, char *argv[]) {
             }
             
             if(similarity > minimumSimilarity){
-                cout << images[i].fileName << " and " << images[j].fileName << " are " << similarity << " % similar.\n";
-                //TODO: sort by similarity before outputting?
+                //cout << images[i].fileName << " and " << images[j].fileName << " are " << similarity << " % similar.\n";
+                //TODO: sort by similarity before outputting? -- use an option to determine sorting
                 Pairing newPairing;
                 newPairing.image1 = images[i];
                 newPairing.image2 = images[j];
@@ -169,59 +171,118 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+string GetTitle(Image img, int id, double similarity){
+    return "Image " + to_string(id) + " - (" + img.fileName + ") " + to_string(img.width) + "x" + to_string(img.height) + " (" + to_string(similarity) + "%)";
+}
+
 void ShowMatches(vector<Pairing> matches){
     int currentMatch = 0;
+    int originalMatch = 0;
+    Pairing match = matches[currentMatch];
+    
+    cout << "Showing " << matches.size() << " matches.\n";
 
-    for(Pairing match : matches){
-        currentMatch++;
-        cout << "Showing match " << currentMatch << " of " << matches.size() << ".  " << match.similarity << "% similar.\n";
-
-        string title = "Image 1 - " + to_string(match.image1.width) + "x" + to_string(match.image1.height) + " (" + to_string(match.similarity) + "%)";
+    CImg<unsigned char> image1CImg(match.image1.fileName.c_str());
+    CImg<unsigned char> image2CImg(match.image2.fileName.c_str());
+    CImg<unsigned char>* activeImage = &image1CImg;
+    CImgDisplay image_display(*activeImage, GetTitle(match.image1, 1, match.similarity).c_str());
+    
+    while(!image_display.is_closed()){
         
-        CImg<unsigned char> image1CImg(match.image1.fileName.c_str());
-        CImg<unsigned char> image2CImg(match.image2.fileName.c_str());
-        CImg<unsigned char> activeImage = image1CImg;
-        CImgDisplay image_display(activeImage, title.c_str());
+        originalMatch = currentMatch;
         
-        while(!image_display.is_closed()){
-        
-            if(image_display.is_keyENTER()){
-                image_display.close();
-            }
-            
-            //TODO change to 'f'
-            if(image_display.is_keySPACE()){
-                if(image_display.is_fullscreen()){
-                    image_display.set_fullscreen(false, true);
-                }
-                else{
-                    image_display.set_fullscreen(true, true);
-                }
-                
-            }
-        
-            if(image_display.is_key()){
-   
-                if(activeImage == image1CImg){
-                    title = "Image 2 - " + to_string(match.image2.width) + "x" + to_string(match.image2.height) + " (" + to_string(match.similarity) + "%)";
-                    activeImage = image2CImg;
-                }
-                else{
-                    title = "Image 1 - " + to_string(match.image1.width) + "x" + to_string(match.image1.height) + " (" + to_string(match.similarity) + "%)";
-                    
-                    activeImage = image1CImg;
-                }
-                image_display.display(activeImage);
-                image_display.set_title(title.c_str());
-            }
-        
-            CImgDisplay::wait(image_display);
+        if(image_display.is_keyENTER() || image_display.is_keyESC()){
+            image_display.close();
         }
         
-        //TODO ask permission to continue?
-   
-    }
+        if(image_display.is_keyD()){
+            string targetDeletePath = match.image1.fileName;
+            
+            if(activeImage == &image2CImg){
+                targetDeletePath = match.image2.fileName;
+                match.image2.fileName = "";
+            }
+            else{
+                match.image1.fileName = "";
+            }
+            
+            if(remove(targetDeletePath.c_str()) != 0){
+                cout << "Error deleting " << targetDeletePath << "\n";
+            }
+            else{
+                cout << "Deleted " << targetDeletePath << "\n";
+                image_display.set_title(("Deleted " + targetDeletePath).c_str());
+                CImg<unsigned char> temp(32,32,1,3,0);
+                *activeImage = temp;
+                image_display.display(*activeImage);
+            }
+        }
+        
+        if(image_display.is_keyHOME()){
+            currentMatch = 0;
+        }
+        
+        if(image_display.is_keyEND()){
+            currentMatch = matches.size() - 1;
+        }
+        
+        if(image_display.is_keyARROWUP()){
+            currentMatch = max(currentMatch - 1, 0);
+        }
+        
+        if(image_display.is_keyARROWDOWN()){
+            currentMatch = min(currentMatch + 1, (int)matches.size() - 1);
+        }
+        
+        if(image_display.is_keyF()){
+            if(image_display.is_fullscreen()){
+                image_display.set_fullscreen(false, true);
+            }
+            else{
+                image_display.set_fullscreen(true, true);
+            }
+            
+        }
     
+        if(image_display.is_keyARROWLEFT() && *activeImage != image1CImg){
+            activeImage = &image1CImg;
+            image_display.display(*activeImage);
+            image_display.set_title(GetTitle(match.image1, 1, match.similarity).c_str());
+        }
+        
+        if(image_display.is_keyARROWRIGHT() && *activeImage != image2CImg){
+            activeImage = &image2CImg;
+            image_display.display(*activeImage);
+            image_display.set_title(GetTitle(match.image2, 2, match.similarity).c_str());
+        }
+    
+        if(originalMatch != currentMatch){
+            match = matches[currentMatch];
+ 
+            try{
+                image1CImg.assign(match.image1.fileName.c_str());
+            }
+            catch(exception& e){
+                image1CImg.assign(32,32,1,3,0);
+                //title = "Deleted (" + match.image1.fileName + ")";
+            }
+            
+            try{
+                image2CImg.assign(match.image2.fileName.c_str());
+            }
+            catch(exception& e){
+                image2CImg.assign(32,32,1,3,0);
+                //title = "Deleted (" + match.image2.fileName + ")";
+            }
+            
+            activeImage = &image1CImg;
+            image_display.display(*activeImage);
+            image_display.set_title(GetTitle(match.image1, 1, match.similarity).c_str());
+        }
+    
+        CImgDisplay::wait(image_display);
+    }
+        
 }
 
 vector<float> ConvertToYUV(vector<int> colour){
@@ -238,24 +299,18 @@ float GetAspectRatioPenalty(Image image1, Image image2){
     float image1ar = (float)image1.width / (float)image1.height;
     float image2ar = (float)image2.width / (float)image2.height;
     float multiplier = max(1.0f - aspectRatioPenalty * (abs(image1ar - image2ar)), 0.0f);
-    cout << "ar penalty: " << image1.width << "," << image1.height << " (" << image1ar << ") vs " << image2.width << "," << image2.height << " (" << image2ar << ") yields multiplier of " << multiplier << "\n";
+    //cout << "ar penalty: " << image1.width << "," << image1.height << " (" << image1ar << ") vs " << image2.width << "," << image2.height << " (" << image2ar << ") yields multiplier of " << multiplier << "\n";
     
     return multiplier;
 }
 
 float CompareProfiles(vector<vector<int>> image1, vector<vector<int>> image2){
-    
     float similarSums = 0;
-    //TODO penalize very small images (absolute) when compared to very large images (relative)
-    //TODO penalize for different x,y ratios
     for(int i = 0; i < image1.size(); i++){
-        //TODO YUV or RGB? or both?
         float nbhSimilarity = GetYUVColourSimilarity(ConvertToYUV(image1[i]), ConvertToYUV(image2[i]));
         similarSums += nbhSimilarity;
     }
-    
     float imageSimilarity = similarSums / image1.size();
-    
     return imageSimilarity; 
 }
 
@@ -270,28 +325,6 @@ float GetYUVColourSimilarity(vector<float> a, vector<float> b){
     }
     float similarity = 100.0f - (max(0.0f, min(1.0f, diff * yuvDiffPenalty))) * 100.0f;
     return similarity;
-}
-
-//TODO remove rgb comparison?
-float GetColourSimilarity(vector<int> a, vector<int> b){
-    float red = GetChannelSimilarity(a[0], b[0]);
-    float green = GetChannelSimilarity(a[1], b[1]);
-    float blue = GetChannelSimilarity(a[2], b[2]);
-    
-    float similarity = min(min(red, green), blue);
-    
-    if(colourSimilarityUsesAverage){
-        similarity = (red + green + blue) / 3.0f;
-    }
-    
-    return similarity;
-}
-
-//TODO remove rgb comparison?
-float GetChannelSimilarity(int a, int b){
-    int difference = abs(a - b);
-    float percentDifference = min(difference * colourDifferencePenalty, 100.0f);
-    return (100 - percentDifference);
 }
 
 vector<vector<int>> CreateProfile(CImg<unsigned char> image, int resolution){
@@ -318,51 +351,6 @@ vector<vector<int>> CreateProfile(CImg<unsigned char> image, int resolution){
     }
 
     return profile;
-}
-
-//TODO remove neighbour profile? slower but could be tweaked
-vector<vector<int>> CreateProfile2(CImg<unsigned char> image, int resolution){
-    vector<vector<int>> averages;
-    
-    const vector<int> xStart = {0, (int)round(image.width() * 0.33f), (int)round(image.width() * 0.66f)};
-    const vector<int> xEnd = {(int)round(image.width() * 0.33f) - 1, (int)round(image.width() * 0.66f) - 1, image.width()};
-    
-    const vector<int> yStart = {0, (int)round(image.height() * 0.33f), (int)round(image.height() * 0.66f)};
-    const vector<int> yEnd = {(int)round(image.height() * 0.33f) - 1, (int)round(image.height() * 0.66f) - 1, image.height()};
-    
-    int redSum = 0, greenSum = 0, blueSum = 0;
-    int redAverage, greenAverage, blueAverage;
-    
-    CImg<unsigned char> neighbourhood;
-    int neighbourhoodSize = 0;
-    
-    for(int a = 0; a < xStart.size(); a++){
-        for(int b = 0; b < yStart.size(); b++){
-            neighbourhood = image.get_crop(xStart[a], yStart[b], xEnd[a], yEnd[b]);
-            
-            //cout << "Bounds: x from " << xStart[a] << " to " << xEnd[a] << " and y from " << yStart[b] << " to " << yEnd[b] << '\n';
-            
-            for(int x = 0; x < neighbourhood.width(); x++){
-                for(int y = 0; y < neighbourhood.height(); y++){
-                    redSum += neighbourhood(x, y, 0, 0);
-                    greenSum += neighbourhood(x, y, 0, 1);
-                    blueSum += neighbourhood(x, y, 0, 2);
-                    neighbourhoodSize++;
-                }
-            }
-            
-            redAverage = round(redSum / neighbourhoodSize);
-            greenAverage = round(greenSum / neighbourhoodSize);
-            blueAverage = round(blueSum / neighbourhoodSize);
-            
-            redSum = 0, greenSum = 0, blueSum = 0, neighbourhoodSize = 0;
-            
-            vector<int> temp = {redAverage, greenAverage, blueAverage};
-            averages.push_back(temp);
-        }
-    }
-
-    return averages;
 }
 
 long long factorial(int x){
