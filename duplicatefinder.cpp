@@ -42,7 +42,7 @@ float GetYUVColourSimilarity(vector<float> a, vector<float> b);
 float GetChannelSimilarity(int a, int b);
 void ShowMatches(vector<Pairing> matches);
 float GetAspectRatioPenalty(Image image1, Image image2);
-string GetTitle(Image img, int id, double similarity);
+string GetTitle(Image img, bool isFirst, double similarity, int id);
 
 const float colourDifferencePenalty = 1.0;//0.78125f;
 const bool colourSimilarityUsesAverage = true;//true is less strict = higher percent similar
@@ -59,6 +59,8 @@ int imageLimit = 700;
 float resolutionPenalty = 0;
 int imageMinimumLength = 4;
 string workingDirectory = "./";
+
+int matchesFound = 0;//for GetTitle
 
 int main(int argc, char *argv[]) {
     //TODO: feature: check single image against a directory of images
@@ -171,21 +173,28 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-string GetTitle(Image img, int id, double similarity){
-    return "Image " + to_string(id) + " - (" + img.fileName + ") " + to_string(img.width) + "x" + to_string(img.height) + " (" + to_string(similarity) + "%)";
+string GetTitle(Image img, bool isFirst, double similarity, int id){
+    string withinPairIdentifier;
+    if(isFirst){
+        withinPairIdentifier = "a";
+    }
+    else{
+        withinPairIdentifier = "b";
+    }
+    return "[" + to_string(id+1) + "/" + to_string(matchesFound) + "," + withinPairIdentifier + "]{" + to_string(similarity) + "%}(" + to_string(img.width) + "x" + to_string(img.height) + ") " + img.fileName + "";
 }
 
 void ShowMatches(vector<Pairing> matches){
     int currentMatch = 0;
-    int originalMatch = 0;
+    int originalMatch = 0;//used to detect a change
     Pairing match = matches[currentMatch];
-    
+    matchesFound = matches.size();//used to form titles
     cout << "Showing " << matches.size() << " matches.\n";
 
     CImg<unsigned char> image1CImg(match.image1.fileName.c_str());
     CImg<unsigned char> image2CImg(match.image2.fileName.c_str());
     CImg<unsigned char>* activeImage = &image1CImg;
-    CImgDisplay image_display(*activeImage, GetTitle(match.image1, 1, match.similarity).c_str());
+    CImgDisplay image_display(*activeImage, GetTitle(match.image1, true, match.similarity, currentMatch).c_str());
     
     while(!image_display.is_closed()){
         
@@ -195,7 +204,7 @@ void ShowMatches(vector<Pairing> matches){
             image_display.close();
         }
         
-        if(image_display.is_keyD()){
+        if(image_display.is_keyD()){//delete current image
             string targetDeletePath = match.image1.fileName;
             
             if(activeImage == &image2CImg){
@@ -244,18 +253,19 @@ void ShowMatches(vector<Pairing> matches){
             
         }
     
-        if(image_display.is_keyARROWLEFT() && *activeImage != image1CImg){
+        if(image_display.is_keyARROWLEFT()){
             activeImage = &image1CImg;
             image_display.display(*activeImage);
-            image_display.set_title(GetTitle(match.image1, 1, match.similarity).c_str());
+            image_display.set_title(GetTitle(match.image1, true, match.similarity, currentMatch).c_str());
         }
         
-        if(image_display.is_keyARROWRIGHT() && *activeImage != image2CImg){
+        if(image_display.is_keyARROWRIGHT()){
             activeImage = &image2CImg;
             image_display.display(*activeImage);
-            image_display.set_title(GetTitle(match.image2, 2, match.similarity).c_str());
+            image_display.set_title(GetTitle(match.image2, false, match.similarity, currentMatch).c_str());
         }
     
+        //go to next matching pair
         if(originalMatch != currentMatch){
             match = matches[currentMatch];
  
@@ -277,7 +287,7 @@ void ShowMatches(vector<Pairing> matches){
             
             activeImage = &image1CImg;
             image_display.display(*activeImage);
-            image_display.set_title(GetTitle(match.image1, 1, match.similarity).c_str());
+            image_display.set_title(GetTitle(match.image1, true, match.similarity, currentMatch).c_str());
         }
     
         CImgDisplay::wait(image_display);
